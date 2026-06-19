@@ -59,9 +59,15 @@ export function renderLogin() {
     try {
       await fb.signInWithEmailAndPassword(auth, email.value.trim(), pass.value);
     } catch (e) {
-      const msg = authErrorMessage(e.code);
-      err.textContent = msg || e.message || "Login failed.";
-      console.error("Login error:", e.code, e.message);
+      console.error("═══ LOGIN ERROR ═══");
+      console.error("error.code:", e.code);
+      console.error("error.message:", e.message);
+      console.error("full error object:", e);
+      console.error("═══════════════════");
+
+      err.style.whiteSpace = "pre-wrap";
+      err.style.fontSize = "0.82rem";
+      err.textContent = `Error code: ${e.code || "none"}\nMessage: ${e.message || "unknown"}`;
       busy(submit, false, "Log in");
     }
   };
@@ -120,15 +126,19 @@ export function renderSignup() {
       // The onAuthStateChanged listener in main.js will detect the new user
       // and either route to home (if profile was written) or to "complete profile."
     } catch (e) {
-      console.error("Signup error:", e.code, e.message);
-      if (e.code === "auth/email-already-in-use") {
-        err.innerHTML = "";
-        err.appendChild(el("span", { text: "This email is already registered. " }));
-        err.appendChild(el("a", { class: "link", text: "Log in instead →", onClick: () => navigate("/login") }));
-      } else {
-        const msg = authErrorMessage(e.code);
-        err.textContent = msg || e.message || "Signup failed.";
-      }
+      // ── RAW ERROR DISPLAY — no custom messages, show exactly what Firebase returns ──
+      console.error("═══ SIGNUP ERROR ═══");
+      console.error("error.code:", e.code);
+      console.error("error.message:", e.message);
+      console.error("full error object:", e);
+      console.error("═══════════════════");
+
+      // Show the raw Firebase error on screen
+      err.style.whiteSpace = "pre-wrap";
+      err.style.fontSize = "0.82rem";
+      err.style.lineHeight = "1.5";
+      err.textContent = `Error code: ${e.code || "none"}\nMessage: ${e.message || "unknown"}\n\nFull: ${JSON.stringify({code: e.code, message: e.message, name: e.name, stack: e.stack?.split("\n")[0]}, null, 2)}`;
+
       busy(submit, false, "Create account");
     }
   };
