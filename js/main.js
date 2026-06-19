@@ -1,11 +1,18 @@
 // App bootstrap: config check, Firebase init, auth state, routing, global watchers.
+// Performance contract:
+//   - ZERO Firestore reads before auth succeeds.
+//   - Show the app shell IMMEDIATELY after auth confirms a user.
+//   - Profile + watchers load in the background (non-blocking).
+//   - Timing logs for every step.
 import { isFirebaseConfigured } from "./config.js";
 import { route, setNotFound, navigate, startRouter, parseHash } from "./router.js";
 import { state, setAuthUser, setProfile, setReady, setUnreadNotifs, setUnreadChats, on } from "./state.js";
 import { el, mount, toast } from "./utils.js";
 
-const APP_VERSION = "2.6.0";
-console.log("%cAurelix v" + APP_VERSION + " loaded", "color:#4d8dff;font-weight:bold");
+const APP_VERSION = "2.7.0";
+const T0 = performance.now();
+const t = (label) => console.log(`%c⏱ ${label}: ${Math.round(performance.now() - T0)}ms`, "color:#4d8dff");
+console.log(`%cAurelix v${APP_VERSION} loaded`, "color:#4d8dff;font-weight:bold");
 
 const PUBLIC_ROUTES = ["/login", "/signup", "/forgot", "/setup"];
 let firebaseReady = false;
@@ -22,15 +29,13 @@ function showBootError(message) {
   ]));
 }
 
-// ---- Route table (dynamic imports keep first paint light) ----
+// ── Route table ──────────────────────────────────────────────────────────────
 function registerRoutes() {
-  // Public
   route("/setup", async () => { (await import("./views/setup.js")).renderSetup(); });
   route("/login", async () => { redirectIfAuthed() || (await import("./views/auth.js")).renderLogin(); });
   route("/signup", async () => { redirectIfAuthed() || (await import("./views/auth.js")).renderSignup(); });
   route("/forgot", async () => { redirectIfAuthed() || (await import("./views/auth.js")).renderForgot(); });
 
-  // Guarded app routes
   route("/", guard(async (ctx) => (await import("./views/feed.js")).renderFeed(ctx)));
   route("/search", guard(async (ctx) => (await import("./views/search.js")).renderSearch(ctx)));
   route("/reels", guard(async (ctx) => (await import("./views/reels.js")).renderReels(ctx)));
@@ -61,28 +66,70 @@ function guard(handler) {
   return async (ctx) => {
     if (!firebaseReady) return;
     if (!state.authUser) { navigate("/login", { replace: true }); return; }
-    if (!state.profile) { (await import("./views/auth.js")).renderCompleteProfile(); return; }
+    // Don't block on profile — if it hasn't loaded yet, show "complete profile" only
+    // if we've confirmed it doesn't exist (profile === null AND profileChecked).
+    if (state.profileChecked && !state.profile) {
+      (await import("./views/auth.js")).renderCompleteProfile();
+      return;
+    }
     return handler(ctx);
   };
 }
 
 function redirectIfAuthed() {
-  if (state.authUser && state.profile) { navigate("/", { replace: true }); return true; }
+  if (state.authUser) { navigate("/", { replace: true }); return true; }
   return false;
 }
 
+// ── Global watchers (Firestore subscriptions) ────────────────────────────────
+// Started lazily in background after auth succeeds. Never block the UI.
 async function startGlobalWatchers(uid) {
   stopGlobalWatchers();
-  const { watchUser } = await import("./services/users.js");
-  const { watchUnreadCount } = await import("./services/notifications.js");
-  const { watchUnreadConversations } = await import("./services/messages.js");
-  const { watchIncomingCalls } = await import("./services/calls.js");
-  const { mountIncomingCall } = await import("./views/incomingCall.js");
+  const t0 = performance.now();
 
-  globalUnsubs.push(watchUser(uid, (profile) => { if (profile) setProfile(profile); }));
+  const [
+    { watchUser },
+    { watchUnreadCount },
+    { watchUnreadConversations },
+    { watchIncomingCalls },
+    { mountIncomingCall },
+  ] = await Promise.all([
+    import("./services/users.js"),
+    import("./services/notifications.js"),
+    import("./services/messages.js"),
+    import("./services/calls.js"),
+    import("./views/incomingCall.js"),
+  ]);
+
+  console.log(`%c⏱ watcher modules imported: ${Math.round(performance.now() - t0)}ms`, "color:#4d8dff");
+
+  // Single profile watcher — this is the ONLY Firestore read that feeds the profile.
+  // It fires once immediately (current doc) then keeps it live.
+  globalUnsubs.push(watchUser(uid, (profile) => {
+    if (profile) {
+      const wasNull = !state.profile;
+      setProfile(profile);
+      if (wasNull) {
+        t("profile loaded (first)");
+        // If we were waiting on profile to render a guarded route, re-render now.
+        import("./router.js").then((r) => r.refresh());
+      }
+    } else {
+      // Profile doesn't exist → mark as checked so guard shows "complete profile"
+      state.profileChecked = true;
+      setProfile(null);
+      import("./router.js").then((r) => r.refresh());
+    }
+  }));
+
+  // Badge watchers — lightweight, just counts.
   globalUnsubs.push(watchUnreadCount(uid, (n) => setUnreadNotifs(n)));
   globalUnsubs.push(watchUnreadConversations(uid, (n) => setUnreadChats(n)));
+
+  // Incoming calls — fires only when someone rings this user.
   globalUnsubs.push(watchIncomingCalls(uid, (calls) => mountIncomingCall(calls)));
+
+  t("global watchers active");
 }
 
 function stopGlobalWatchers() {
@@ -90,28 +137,38 @@ function stopGlobalWatchers() {
   globalUnsubs = [];
 }
 
+// ── Auth state handler ───────────────────────────────────────────────────────
+// PERFORMANCE CRITICAL: No Firestore reads here. Show app instantly.
 let routerStarted = false;
 async function onAuthChanged(user) {
+  t("onAuthStateChanged fired");
   const firstRun = !routerStarted;
+
   if (user) {
+    // ── IMMEDIATE: set auth user + show the app ──
     setAuthUser(user);
-    const { getUser } = await import("./services/users.js");
-    let profile = null;
-    try { profile = await getUser(user.uid); } catch (e) { console.error(e); }
-    setProfile(profile);
     setReady(true);
-    if (profile) await startGlobalWatchers(user.uid);
+    state.profileChecked = false; // reset — will be set by watcher
 
     if (firstRun) { routerStarted = true; startRouter(); }
+    t("router started (app visible)");
+
     const { path } = parseHash();
     if (PUBLIC_ROUTES.includes(path)) navigate("/", { replace: true });
-    else if (!profile) { (await import("./views/auth.js")).renderCompleteProfile(); }
     else { const { refresh } = await import("./router.js"); refresh(); }
+
+    // ── BACKGROUND: load profile + start watchers (non-blocking) ──
+    // This does NOT block the user from seeing the app shell / feed.
+    startGlobalWatchers(user.uid).catch((e) => console.warn("Watchers init error:", e));
+
   } else {
+    // ── Signed out ──
     stopGlobalWatchers();
     setAuthUser(null);
     setProfile(null);
+    state.profileChecked = false;
     setReady(true);
+
     if (firstRun) { routerStarted = true; startRouter(); }
     const { path } = parseHash();
     if (!PUBLIC_ROUTES.includes(path)) navigate("/login", { replace: true });
@@ -119,49 +176,53 @@ async function onAuthChanged(user) {
   }
 }
 
+// ── Boot ─────────────────────────────────────────────────────────────────────
 async function boot() {
+  t("boot() start");
   registerRoutes();
 
   if (!isFirebaseConfigured()) {
-    // No config yet → force the setup screen.
     startRouter();
     const { path } = parseHash();
     if (path !== "/setup") navigate("/setup", { replace: true });
     else { const { refresh } = await import("./router.js"); refresh(); }
+    t("no config — setup screen shown");
     return;
   }
 
   try {
     const { initFirebase } = await import("./firebase.js");
+    t("firebase.js imported");
     const { auth, fb } = await initFirebase();
+    t("Firebase SDK initialized");
     firebaseReady = true;
+
+    // Non-blocking connectivity check (for debugging only, doesn't delay anything)
     runConnectivitySelfTest();
-    // Router starts after the first auth result (in onAuthChanged) to avoid a flash.
+
+    // Auth listener — first callback fires synchronously if a persisted session exists.
     fb.onAuthStateChanged(auth, onAuthChanged);
+    t("onAuthStateChanged registered");
   } catch (e) {
     console.error("Firebase init failed:", e);
     showBootError(e.message || "Could not initialize Firebase. Check your configuration.");
   }
 }
 
-/** Logs whether Firebase Auth + Firestore endpoints are reachable from this device. */
-async function runConnectivitySelfTest() {
+/** Non-blocking connectivity self-test (debug only). */
+function runConnectivitySelfTest() {
   const test = async (label, url) => {
     const t0 = Date.now();
     try {
-      // no-cors so we don't need CORS headers — we only care if the request completes
       await fetch(url, { method: "GET", mode: "no-cors", cache: "no-store" });
       console.log(`%c✓ ${label} reachable (${Date.now() - t0}ms)`, "color:#46e3c0");
-      return true;
     } catch (e) {
       console.log(`%c✗ ${label} NOT reachable: ${e.message}`, "color:#ff4d6d");
-      return false;
     }
   };
-  console.log("%cAurelix connectivity self-test…", "color:#4d8dff;font-weight:bold");
-  await test("Firebase Auth (identitytoolkit)", "https://identitytoolkit.googleapis.com/");
-  await test("Firestore", "https://firestore.googleapis.com/");
-  console.log("If either shows NOT reachable, your network/carrier is blocking Google APIs.");
+  console.log("%cConnectivity self-test (non-blocking)…", "color:#9aa0ad");
+  test("Firebase Auth (identitytoolkit)", "https://identitytoolkit.googleapis.com/");
+  test("Firestore", "https://firestore.googleapis.com/");
 }
 
 window.addEventListener("error", (e) => console.error("Global error:", e.error || e.message));

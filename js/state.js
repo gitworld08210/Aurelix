@@ -4,6 +4,7 @@ const listeners = new Map(); // event -> Set<fn>
 export const state = {
   authUser: null,     // firebase auth user
   profile: null,      // users/{uid} document data (+ id)
+  profileChecked: false, // true once the watcher confirms profile exists or not
   ready: false,       // first auth check complete
   unreadNotifs: 0,
   unreadChats: 0,
