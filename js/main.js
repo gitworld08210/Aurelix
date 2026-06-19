@@ -4,7 +4,7 @@ import { route, setNotFound, navigate, startRouter, parseHash } from "./router.j
 import { state, setAuthUser, setProfile, setReady, setUnreadNotifs, setUnreadChats, on } from "./state.js";
 import { el, mount, toast } from "./utils.js";
 
-const APP_VERSION = "2.5.0";
+const APP_VERSION = "2.6.0";
 console.log("%cAurelix v" + APP_VERSION + " loaded", "color:#4d8dff;font-weight:bold");
 
 const PUBLIC_ROUTES = ["/login", "/signup", "/forgot", "/setup"];
@@ -135,12 +135,33 @@ async function boot() {
     const { initFirebase } = await import("./firebase.js");
     const { auth, fb } = await initFirebase();
     firebaseReady = true;
+    runConnectivitySelfTest();
     // Router starts after the first auth result (in onAuthChanged) to avoid a flash.
     fb.onAuthStateChanged(auth, onAuthChanged);
   } catch (e) {
     console.error("Firebase init failed:", e);
     showBootError(e.message || "Could not initialize Firebase. Check your configuration.");
   }
+}
+
+/** Logs whether Firebase Auth + Firestore endpoints are reachable from this device. */
+async function runConnectivitySelfTest() {
+  const test = async (label, url) => {
+    const t0 = Date.now();
+    try {
+      // no-cors so we don't need CORS headers — we only care if the request completes
+      await fetch(url, { method: "GET", mode: "no-cors", cache: "no-store" });
+      console.log(`%c✓ ${label} reachable (${Date.now() - t0}ms)`, "color:#46e3c0");
+      return true;
+    } catch (e) {
+      console.log(`%c✗ ${label} NOT reachable: ${e.message}`, "color:#ff4d6d");
+      return false;
+    }
+  };
+  console.log("%cAurelix connectivity self-test…", "color:#4d8dff;font-weight:bold");
+  await test("Firebase Auth (identitytoolkit)", "https://identitytoolkit.googleapis.com/");
+  await test("Firestore", "https://firestore.googleapis.com/");
+  console.log("If either shows NOT reachable, your network/carrier is blocking Google APIs.");
 }
 
 window.addEventListener("error", (e) => console.error("Global error:", e.error || e.message));

@@ -13,6 +13,12 @@ export let fb = null; // namespace bag of imported functions
 
 let initPromise = null;
 
+// Test seam: lets the automated test harness inject an in-memory backend.
+// Unused in production. Has no effect on the real app.
+export function __setTestBackend(testFb, testDb, testAuth) {
+  fb = testFb; db = testDb; auth = testAuth;
+}
+
 export function initFirebase() {
   if (initPromise) return initPromise;
   initPromise = (async () => {

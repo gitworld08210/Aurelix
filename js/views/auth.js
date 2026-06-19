@@ -57,7 +57,21 @@ export function renderLogin() {
     if (!email.value.trim() || !pass.value) { err.textContent = "Enter your email and password."; return; }
     busy(submit, true);
     try {
-      await fb.signInWithEmailAndPassword(auth, email.value.trim(), pass.value);
+      let lastErr = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          err.textContent = attempt === 1 ? "" : `Network was slow — retrying (${attempt}/3)…`;
+          await fb.signInWithEmailAndPassword(auth, email.value.trim(), pass.value);
+          lastErr = null;
+          break;
+        } catch (attemptErr) {
+          lastErr = attemptErr;
+          console.warn(`Login attempt ${attempt} failed:`, attemptErr.code, attemptErr.message);
+          if (attemptErr.code !== "auth/network-request-failed" && attemptErr.code !== "auth/timeout") break;
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
+      }
+      if (lastErr) throw lastErr;
     } catch (e) {
       console.error("═══ LOGIN ERROR ═══");
       console.error("error.code:", e.code);
@@ -112,14 +126,31 @@ export function renderSignup() {
 
     busy(submit, true);
     try {
-      // ── Step 1: Create Firebase Auth account IMMEDIATELY ──
-      // No Firestore pre-check. Just create the account.
-      const cred = await fb.createUserWithEmailAndPassword(auth, email.value.trim(), pass.value);
+      // ── Step 1: Create Firebase Auth account (with retry on transient network failures) ──
+      // Mobile networks frequently drop a single request (auth/network-request-failed).
+      // We retry up to 3 times before surfacing the error.
+      let cred = null;
+      let lastErr = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          err.textContent = attempt === 1 ? "" : `Network was slow — retrying (${attempt}/3)…`;
+          cred = await fb.createUserWithEmailAndPassword(auth, email.value.trim(), pass.value);
+          lastErr = null;
+          break;
+        } catch (attemptErr) {
+          lastErr = attemptErr;
+          console.warn(`Signup attempt ${attempt} failed:`, attemptErr.code, attemptErr.message);
+          // Only retry on network errors; fail fast on real errors (email-in-use, weak pw, etc.)
+          if (attemptErr.code !== "auth/network-request-failed" && attemptErr.code !== "auth/timeout") break;
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
+      }
+      if (lastErr) throw lastErr;
+
+      err.textContent = "";
       await fb.updateProfile(cred.user, { displayName: name.value.trim() });
 
       // ── Step 2: Try to write user profile to Firestore (best-effort) ──
-      // If Firestore is slow/offline, we don't block — the "complete profile"
-      // screen will catch it on next load.
       createUserProfileSafe(cred.user.uid, uname, name.value.trim(), email.value.trim());
 
       toast("Account created! Welcome to Aurelix 🎉", "success");
