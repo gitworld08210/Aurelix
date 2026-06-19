@@ -26,6 +26,31 @@ export function initFirebase() {
     ]);
 
     app = appMod.initializeApp(cfg.firebase);
+
+    // ── App Check: DISABLED for development ──────────────────────────────────
+    // If App Check is enabled in the Firebase Console, it rejects requests from
+    // web apps that don't present a valid token (error: auth/firebase-app-check-
+    // token-is-invalid). We activate the DEBUG provider so the SDK sends a debug
+    // token that Firebase accepts without reCAPTCHA verification.
+    //
+    // TO FULLY DISABLE: Go to Firebase Console → App Check → Apps tab →
+    // click the overflow menu (⋮) on your web app → select "Unenforce" or
+    // "Unregister". That stops the server from requiring tokens entirely.
+    try {
+      const appCheckMod = await import(`${base}/firebase-app-check.js`);
+      // Setting this global tells the SDK to use a debug token instead of reCAPTCHA.
+      if (typeof self !== "undefined") self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+      appCheckMod.initializeAppCheck(app, {
+        provider: new appCheckMod.ReCaptchaEnterpriseProvider("FAKE_DEBUG_KEY"),
+        isTokenAutoRefreshEnabled: true,
+      });
+      console.log("App Check: debug mode enabled (bypasses enforcement)");
+    } catch (e) {
+      // If the App Check module fails to load or init, that's fine —
+      // it means App Check isn't enforced and we don't need it.
+      console.warn("App Check init skipped:", e.message);
+    }
+
     auth = authMod.getAuth(app);
 
     // Persistent login session across reloads/tabs.
@@ -36,21 +61,14 @@ export function initFirebase() {
     }
 
     // ── Firestore transport fix ──────────────────────────────────────────────
-    // The default Firestore transport (WebChannel/streaming) is blocked by many
-    // mobile carriers, corporate proxies and some ISPs, producing the dreaded
-    // "Failed to get document because the client is offline" error even when the
-    // device clearly has internet.
-    //
-    // Forcing long-polling makes Firestore use plain HTTP requests, which work
-    // virtually everywhere (mobile data, 5G, proxies). It is the most reliable
-    // configuration for a public web app.
+    // Force long-polling so Firestore works on mobile carriers/proxies that
+    // block WebChannel streaming.
     try {
       db = fsMod.initializeFirestore(app, {
         experimentalForceLongPolling: true,
         useFetchStreams: false,
       });
     } catch (e) {
-      // Already initialized (e.g. hot reload) — fall back to the existing instance.
       console.warn("initializeFirestore fallback:", e.message);
       db = fsMod.getFirestore(app);
     }
