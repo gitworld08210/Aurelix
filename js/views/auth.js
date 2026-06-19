@@ -209,7 +209,11 @@ export function renderCompleteProfile() {
   const name = el("input", { class: "input", placeholder: "Your name", value: auth.currentUser?.displayName || "" });
   const username = el("input", { class: "input", placeholder: "username", spellcheck: false });
   const err = el("div", { class: "error-text" });
+  const hint = el("div", { class: "hint" });
   const submit = el("button", { class: "btn primary full mt", text: "Finish setup" });
+  const reconfigBtn = el("a", { class: "link", text: "Re-run setup (fix Firebase config)", onClick: () => {
+    import("../config.js").then((m) => { m.clearConfig(); location.hash = "#/setup"; location.reload(); });
+  }});
 
   username.addEventListener("input", () => { username.value = username.value.toLowerCase().replace(/[^a-z0-9_]/g, ""); });
 
@@ -220,11 +224,27 @@ export function renderCompleteProfile() {
     if (uname.length < 3) return (err.textContent = "Username must be at least 3 characters.");
     busy(submit, true);
     try {
-      if (!(await isUsernameAvailable(uname))) { err.textContent = "That username is taken."; busy(submit, false, "Finish setup"); return; }
+      // Skip username availability check if Firestore is unreachable — let the write itself fail/succeed
+      let available = true;
+      try {
+        available = await isUsernameAvailable(uname);
+      } catch (checkErr) {
+        console.warn("Username check failed:", checkErr.message);
+        // If offline error, proceed anyway — the profile write will also fail and we'll show the real error
+        if (checkErr.message && checkErr.message.includes("offline")) {
+          throw new Error("Firestore is offline. Please check:\n1. You created a Firestore database in Firebase Console\n2. Your Firebase config (API key, project ID) is correct\n\nTap 'Re-run setup' below to fix your config.");
+        }
+        // For other errors, continue and let createUserProfile handle it
+      }
+      if (!available) { err.textContent = "That username is taken."; busy(submit, false, "Finish setup"); return; }
       await createUserProfile(auth.currentUser.uid, { username: uname, displayName: name.value.trim(), email: auth.currentUser.email || "" });
       location.reload();
     } catch (e) {
-      err.textContent = e.message || "Could not finish setup.";
+      let msg = e.message || "Could not finish setup.";
+      if (msg.includes("offline")) {
+        msg = "Firestore can't connect. Check:\n• Firestore database exists in Firebase Console\n• Your API key and Project ID are correct\n• Tap 'Re-run setup' below to fix config";
+      }
+      err.textContent = msg;
       busy(submit, false, "Finish setup");
     }
   });
@@ -235,5 +255,7 @@ export function renderCompleteProfile() {
     el("div", { class: "field" }, [el("label", { text: "Username" }), username]),
     err,
     submit,
+    el("div", { class: "auth-switch mt" }, [reconfigBtn]),
+    hint,
   ]));
 }

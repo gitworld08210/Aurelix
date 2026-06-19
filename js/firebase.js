@@ -35,7 +35,27 @@ export function initFirebase() {
       console.warn("Could not set auth persistence:", e);
     }
 
-    db = fsMod.getFirestore(app);
+    // Initialize Firestore WITHOUT offline persistence.
+    // This prevents "Failed to get document because the client is offline" errors
+    // that occur on mobile when IndexedDB persistence has issues or when the
+    // Firestore database hasn't been accessed before.
+    try {
+      db = fsMod.initializeFirestore(app, {
+        experimentalForceLongPolling: false,
+        // Disable offline cache to avoid "client is offline" false positives
+        localCache: undefined,
+      });
+    } catch (e) {
+      // If initializeFirestore fails (already initialized), fall back to getFirestore
+      db = fsMod.getFirestore(app);
+    }
+
+    // Explicitly tell Firestore to connect
+    try {
+      await fsMod.enableNetwork(db);
+    } catch (e) {
+      console.warn("enableNetwork:", e.message);
+    }
 
     // Bag of every Firestore/Auth function the services need.
     fb = {
