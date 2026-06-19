@@ -1,32 +1,55 @@
 // Runtime configuration for Aurelix.
 //
-// The app needs YOUR Firebase project + Cloudinary details. There are two ways
-// to provide them:
-//
-//  1) RECOMMENDED for deploys: create js/config.local.js (git-ignored) that sets
-//     window.AURELIX_CONFIG = { firebase: {...}, cloudinary: {...} };
-//     and add <script src="./js/config.local.js"></script> before main.js in index.html.
-//
-//  2) ZERO-FILE option: just open the app — the built-in Setup screen lets you
-//     paste your Firebase config + Cloudinary preset once. It is stored in this
-//     browser's localStorage (key below). Great for trying it instantly.
-//
-// No keys are committed to the repo, and there is NO demo/placeholder data.
+// The Firebase config is embedded below so the app works out-of-the-box on any
+// deploy (Vercel, etc.) without a setup step. Cloudinary (for images/reels) can
+// be added through the in-app Setup screen and is stored in localStorage.
 
 const STORAGE_KEY = "aurelix.config.v1";
-
 const REQUIRED_FIREBASE = ["apiKey", "authDomain", "projectId", "appId"];
 
+// ---------------------------------------------------------------------------
+// EMBEDDED FIREBASE CONFIG (your project: nexus-a9d8d)
+// ---------------------------------------------------------------------------
+const EMBEDDED = {
+  firebase: {
+    apiKey: "AIzaSyDjxMLvyL_c4zNDsY9rMF9L8ccNNPkPx3Y",
+    authDomain: "nexus-a9d8d.firebaseapp.com",
+    projectId: "nexus-a9d8d",
+    storageBucket: "nexus-a9d8d.firebasestorage.app",
+    messagingSenderId: "404148294813",
+    appId: "1:404148294813:web:73743dd39450efda207074",
+    measurementId: "G-ZGFY4H445T",
+  },
+  // Add your Cloudinary unsigned preset here OR via the in-app Setup screen
+  // to enable photo/reel/avatar uploads.
+  cloudinary: {
+    cloudName: "",
+    uploadPreset: "",
+    folder: "aurelix",
+  },
+};
+
 export function getConfig() {
-  // window.AURELIX_CONFIG wins if present (from config.local.js)
+  // window.AURELIX_CONFIG (from an optional config.local.js) overrides everything.
   if (typeof window !== "undefined" && window.AURELIX_CONFIG) {
     return normalize(window.AURELIX_CONFIG);
   }
+
+  // Firebase is always the embedded config (so a corrupted/old localStorage entry
+  // can never break the connection). Cloudinary can be augmented from localStorage.
+  let storedCloudinary = null;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return normalize(JSON.parse(raw));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.cloudinary && parsed.cloudinary.cloudName) storedCloudinary = parsed.cloudinary;
+    }
   } catch { /* ignore */ }
-  return null;
+
+  return {
+    firebase: { ...EMBEDDED.firebase },
+    cloudinary: storedCloudinary || { ...EMBEDDED.cloudinary },
+  };
 }
 
 function normalize(cfg) {
@@ -36,8 +59,13 @@ function normalize(cfg) {
   };
 }
 
+/** Save only Cloudinary settings (Firebase is embedded). */
 export function saveConfig(cfg) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+  const existing = getConfig();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    firebase: EMBEDDED.firebase,
+    cloudinary: (cfg && cfg.cloudinary) || existing.cloudinary,
+  }));
 }
 
 export function clearConfig() {
