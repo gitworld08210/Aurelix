@@ -142,18 +142,28 @@ export function renderSignup() {
       // main.js auth listener will load the profile and route home
     } catch (e) {
       console.error("Signup error:", e);
+      // Handle "email already registered" with a helpful Log in shortcut.
+      if (e.code === "auth/email-already-in-use") {
+        err.innerHTML = "";
+        err.appendChild(document.createTextNode("This email is already registered. "));
+        const link = el("a", { class: "link", text: "Log in instead →", onClick: () => navigate("/login") });
+        err.appendChild(link);
+        busy(submit, false, "Create account");
+        return;
+      }
       // Show the actual error message for debugging
       let msg = e.code ? authErrorMessage(e.code) : "";
       if (!msg && e.message) {
         msg = e.message;
-        // Common Firestore permission errors
         if (e.message.includes("PERMISSION_DENIED") || e.message.includes("permission-denied")) {
-          msg = "Firestore permission denied. Have you deployed the security rules from firestore.rules? Or set Firestore to test mode temporarily.";
+          msg = "Firestore permission denied. Deploy the security rules (or set Firestore to test mode) in the Firebase Console.";
+        } else if (e.message.includes("offline") || e.message.includes("unavailable")) {
+          msg = "Can't reach Firestore. Make sure a Firestore database exists in your Firebase Console.";
         } else if (e.message.includes("NOT_FOUND") || e.message.includes("not-found")) {
-          msg = "Firestore database not found. Make sure you've created a Firestore database in your Firebase console.";
+          msg = "Firestore database not found. Create a Firestore database in your Firebase Console.";
         }
       }
-      err.textContent = msg || "Could not create account. Check browser console for details.";
+      err.textContent = msg || "Could not create account. Open browser console (⋮ → Developer tools) for the exact error.";
       busy(submit, false, "Create account");
     }
   };
