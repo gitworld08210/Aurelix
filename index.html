@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <meta name="description" content="Aurelix - share moments, reels and live calls." />
+  <title>Aurelix</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./assets/icon.svg" />
+  <link rel="stylesheet" href="./css/styles.css" />
+</head>
+<body>
+  <!-- Initial boot splash. Replaced by the app once JS mounts. -->
+  <div id="app">
+    <div id="boot" class="boot-screen">
+      <div class="boot-logo">Aurelix</div>
+      <div class="spinner"></div>
+    </div>
+  </div>
+
+  <!-- Global call overlay lives outside the routed view so it survives navigation -->
+  <div id="call-layer"></div>
+  <!-- Toast / notification host -->
+  <div id="toast-host" aria-live="polite"></div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

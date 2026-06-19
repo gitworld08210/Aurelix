@@ -1,0 +1,19 @@
+{
+  "name": "aurelix",
+  "version": "1.0.0",
+  "description": "Aurelix - a no-build, CDN/ES-module social media app with Firebase, Cloudinary and WebRTC calling.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "serve": "python3 -m http.server 8080",
+    "check": "node tools/check.js && node tools/validate-imports.js && node tools/runtime-load.js"
+  },
+  "keywords": [
+    "social",
+    "firebase",
+    "webrtc",
+    "pwa"
+  ],
+  "license": "MIT"
+}

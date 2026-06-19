@@ -1,0 +1,13 @@
+# Local secrets / runtime config (kept out of git)
+js/config.local.js
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/
+
+# Node (not used for build, but just in case)
+node_modules/
+npm-debug.log*
