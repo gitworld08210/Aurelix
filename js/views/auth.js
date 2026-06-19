@@ -1,9 +1,11 @@
 // Authentication screens: login, signup, forgot password, complete profile.
+// Firestore connection test is DISABLED. Signup creates the Auth account immediately.
+// The user profile document is created AFTER signup succeeds (best-effort, with retry on next load).
 import { el, toast } from "../utils.js";
 import { mountFull } from "../shell.js";
 import { auth, fb, db } from "../firebase.js";
 import { navigate } from "../router.js";
-import { createUserProfile, isUsernameAvailable } from "../services/users.js";
+import { createUserProfile } from "../services/users.js";
 
 function authErrorMessage(code = "") {
   const map = {
@@ -58,7 +60,7 @@ export function renderLogin() {
       await fb.signInWithEmailAndPassword(auth, email.value.trim(), pass.value);
     } catch (e) {
       const msg = authErrorMessage(e.code);
-      err.textContent = msg || e.message || "Login failed. Check console for details.";
+      err.textContent = msg || e.message || "Login failed.";
       console.error("Login error:", e.code, e.message);
       busy(submit, false, "Log in");
     }
@@ -80,7 +82,7 @@ export function renderLogin() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SIGNUP
+// SIGNUP — No Firestore test. Auth first, profile write is best-effort after.
 // ═══════════════════════════════════════════════════════════════════════════════
 export function renderSignup() {
   const name = el("input", { class: "input", placeholder: "Your name", autocomplete: "name" });
@@ -104,64 +106,28 @@ export function renderSignup() {
 
     busy(submit, true);
     try {
-      // ── Step 1: Test if Firestore is reachable BEFORE creating the Auth account ──
-      // This avoids the situation where Auth succeeds but the profile write fails.
-      err.textContent = "Checking connection...";
-      const firestoreOk = await testFirestoreConnection();
-      if (!firestoreOk) {
-        err.textContent = "";
-        err.innerHTML = "";
-        err.appendChild(el("div", { style: { marginBottom: "8px" }, text: "❌ Cannot connect to Firestore database." }));
-        err.appendChild(el("div", { text: "Fix this in Firebase Console:" }));
-        err.appendChild(el("div", { style: { marginTop: "6px", fontSize: "0.85rem", lineHeight: "1.6" }, html:
-          "1. Go to <b>Firebase Console → Build → Firestore Database</b><br>" +
-          "2. Click <b>Create database</b> (if not created yet)<br>" +
-          "3. Select <b>Start in test mode</b><br>" +
-          "4. Pick any location → click Enable<br>" +
-          "5. Come back here and try again"
-        }));
-        busy(submit, false, "Create account");
-        return;
-      }
-      err.textContent = "";
-
-      // ── Step 2: Create the Firebase Auth account ──
+      // ── Step 1: Create Firebase Auth account IMMEDIATELY ──
+      // No Firestore pre-check. Just create the account.
       const cred = await fb.createUserWithEmailAndPassword(auth, email.value.trim(), pass.value);
       await fb.updateProfile(cred.user, { displayName: name.value.trim() });
 
-      // ── Step 3: Create the Firestore profile ──
-      // Small delay to let the auth token propagate
-      await new Promise((r) => setTimeout(r, 800));
-      try {
-        await createUserProfile(cred.user.uid, {
-          username: uname,
-          displayName: name.value.trim(),
-          email: email.value.trim(),
-        });
-      } catch (profileErr) {
-        console.warn("Profile write failed, retrying:", profileErr.message);
-        await new Promise((r) => setTimeout(r, 2000));
-        try {
-          await createUserProfile(cred.user.uid, {
-            username: uname,
-            displayName: name.value.trim(),
-            email: email.value.trim(),
-          });
-        } catch (retryErr) {
-          console.error("Profile retry failed:", retryErr);
-          // Auth was created — the "complete profile" flow will catch this on next load
-        }
-      }
-      toast("Welcome to Aurelix! 🎉", "success");
+      // ── Step 2: Try to write user profile to Firestore (best-effort) ──
+      // If Firestore is slow/offline, we don't block — the "complete profile"
+      // screen will catch it on next load.
+      createUserProfileSafe(cred.user.uid, uname, name.value.trim(), email.value.trim());
+
+      toast("Account created! Welcome to Aurelix 🎉", "success");
+      // The onAuthStateChanged listener in main.js will detect the new user
+      // and either route to home (if profile was written) or to "complete profile."
     } catch (e) {
-      console.error("Signup error:", e.code, e.message, e);
+      console.error("Signup error:", e.code, e.message);
       if (e.code === "auth/email-already-in-use") {
         err.innerHTML = "";
         err.appendChild(el("span", { text: "This email is already registered. " }));
         err.appendChild(el("a", { class: "link", text: "Log in instead →", onClick: () => navigate("/login") }));
       } else {
         const msg = authErrorMessage(e.code);
-        err.textContent = msg || e.message || "Signup failed. Check browser console for details.";
+        err.textContent = msg || e.message || "Signup failed.";
       }
       busy(submit, false, "Create account");
     }
@@ -179,6 +145,25 @@ export function renderSignup() {
     submit,
     el("div", { class: "auth-switch" }, ["Already have an account? ", el("a", { text: "Log in", onClick: () => navigate("/login") })]),
   ]));
+}
+
+/**
+ * Fire-and-forget profile creation. Retries in background.
+ * If it fails completely, renderCompleteProfile() catches it on next page load.
+ */
+async function createUserProfileSafe(uid, username, displayName, email) {
+  const attempts = [800, 2000, 4000]; // delays before each retry
+  for (let i = 0; i < attempts.length; i++) {
+    await new Promise((r) => setTimeout(r, attempts[i]));
+    try {
+      await createUserProfile(uid, { username, displayName, email });
+      console.log("Profile created successfully on attempt", i + 1);
+      return; // success — done
+    } catch (e) {
+      console.warn(`Profile creation attempt ${i + 1} failed:`, e.message);
+    }
+  }
+  console.error("All profile creation attempts failed. User will see 'complete profile' on next load.");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -216,71 +201,36 @@ export function renderForgot() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COMPLETE PROFILE (shown when auth exists but profile doc doesn't)
+// COMPLETE PROFILE (shown when auth exists but no Firestore profile yet)
+// No Firestore pre-test. Just try to write. Show clear error if it fails.
 // ═══════════════════════════════════════════════════════════════════════════════
 export function renderCompleteProfile() {
   const name = el("input", { class: "input", placeholder: "Your name", value: auth.currentUser?.displayName || "" });
   const username = el("input", { class: "input", placeholder: "username", spellcheck: false });
   const err = el("div", { class: "error-text" });
   const submit = el("button", { class: "btn primary full mt", text: "Finish setup" });
-  const diagBtn = el("button", { class: "btn full mt", text: "🔧 Run diagnostics", onClick: runDiagnostics });
 
   username.addEventListener("input", () => { username.value = username.value.toLowerCase().replace(/[^a-z0-9_]/g, ""); });
 
-  async function runDiagnostics() {
-    err.innerHTML = "";
-    err.style.whiteSpace = "pre-wrap";
-    err.style.fontSize = "0.8rem";
-    err.style.lineHeight = "1.5";
-    err.textContent = "Running diagnostics...\n";
-    const log = (msg) => { err.textContent += msg + "\n"; };
-
-    log("✓ Firebase Auth: connected (you are logged in)");
-    log("  UID: " + (auth.currentUser?.uid || "none"));
-    log("  Email: " + (auth.currentUser?.email || "none"));
-    log("");
-    log("Testing Firestore connection...");
-
-    const ok = await testFirestoreConnection();
-    if (ok) {
-      log("✓ Firestore: connected! Try clicking Finish setup.");
-      err.style.color = "var(--accent-3)";
-    } else {
-      log("✗ Firestore: CANNOT CONNECT");
-      log("");
-      log("FIX THIS:");
-      log("1. Open Firebase Console (console.firebase.google.com)");
-      log("2. Select project: nexus-a9d8d");
-      log("3. Go to Build → Firestore Database");
-      log("4. If you see 'Create database' → click it");
-      log("5. Choose 'Start in test mode'");
-      log("6. Pick location → Enable");
-      log("7. Come back and reload this page");
-    }
-  }
-
   submit.addEventListener("click", async () => {
     err.textContent = "";
-    err.style.color = "";
-    err.style.whiteSpace = "";
-    err.style.fontSize = "";
     const uname = username.value.trim();
     if (!name.value.trim()) return (err.textContent = "Please enter your name.");
     if (uname.length < 3) return (err.textContent = "Username must be at least 3 characters.");
     busy(submit, true);
     try {
-      // Test Firestore first
-      const ok = await testFirestoreConnection();
-      if (!ok) {
-        err.textContent = "Firestore is not reachable. Click 'Run diagnostics' below for help.";
-        busy(submit, false, "Finish setup");
-        return;
-      }
       await createUserProfile(auth.currentUser.uid, { username: uname, displayName: name.value.trim(), email: auth.currentUser.email || "" });
+      toast("Profile saved!", "success");
       location.reload();
     } catch (e) {
-      console.error("Complete profile error:", e);
-      err.textContent = e.message || "Could not save profile. Click 'Run diagnostics' below.";
+      console.error("Complete profile error:", e.code, e.message, e);
+      let msg = e.message || "Could not save profile.";
+      if (msg.includes("offline") || msg.includes("unavailable")) {
+        msg = "Cannot reach the database right now. Please check your internet connection and try again in a moment.";
+      } else if (msg.includes("permission")) {
+        msg = "Database permission denied. Make sure Firestore rules allow writes for authenticated users.";
+      }
+      err.textContent = msg;
       busy(submit, false, "Finish setup");
     }
   });
@@ -291,40 +241,8 @@ export function renderCompleteProfile() {
     el("div", { class: "field" }, [el("label", { text: "Username" }), username]),
     err,
     submit,
-    diagBtn,
     el("div", { class: "auth-switch mt" }, [
       el("a", { class: "link", text: "Log out and start fresh", onClick: () => fb.signOut(auth).then(() => navigate("/login")) }),
     ]),
   ]));
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// FIRESTORE CONNECTION TEST
-// ═══════════════════════════════════════════════════════════════════════════════
-/**
- * Attempts a lightweight Firestore read with a 10-second timeout.
- * Returns true if Firestore is reachable, false otherwise.
- */
-async function testFirestoreConnection() {
-  try {
-    // Try to read a nonexistent doc — will return "not found" if connected,
-    // or throw "offline"/"unavailable" if Firestore can't be reached.
-    const testRef = fb.doc(db, "__connection_test__", "ping");
-    const result = await Promise.race([
-      fb.getDoc(testRef).then(() => true).catch((e) => {
-        // "permission-denied" means Firestore IS reachable (it denied us, but it responded)
-        if (e.code === "permission-denied" || (e.message && e.message.includes("permission"))) return true;
-        // "not-found" means Firestore IS reachable
-        if (e.code === "not-found") return true;
-        // "unavailable" or "offline" means it's NOT reachable
-        console.warn("Firestore test error:", e.code, e.message);
-        return false;
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 10000)),
-    ]);
-    return result === true;
-  } catch (e) {
-    console.warn("Firestore connection test failed:", e.message);
-    return false;
-  }
 }
