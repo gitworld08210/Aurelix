@@ -30,36 +30,47 @@ export async function isUsernameAvailable(username, exceptUid = null) {
   return exceptUid != null && snap.data().uid === exceptUid;
 }
 
-/** Create the user profile + reserve the username atomically. */
+/** Create the user profile + reserve the username. Uses a batch write for reliability on initial signup. */
 export async function createUserProfile(uid, { username, displayName, email, photoURL = "" }) {
   const lower = username.toLowerCase();
-  await fb.runTransaction(db, async (tx) => {
-    const nameRef = fb.doc(db, "usernames", lower);
-    const nameSnap = await tx.get(nameRef);
+  const nameRef = fb.doc(db, "usernames", lower);
+
+  // Quick check if username is taken (best effort — rules also enforce)
+  try {
+    const nameSnap = await fb.getDoc(nameRef);
     if (nameSnap.exists() && nameSnap.data().uid !== uid) {
       throw new Error("That username is already taken.");
     }
-    tx.set(nameRef, { uid });
-    tx.set(userRef(uid), {
-      username,
-      usernameLower: lower,
-      displayName: displayName || username,
-      displayNameLower: (displayName || username).toLowerCase(),
-      email: email || "",
-      bio: "",
-      photoURL,
-      followersCount: 0,
-      followingCount: 0,
-      postsCount: 0,
-      reelsCount: 0,
-      totalViews: 0,
-      verified: false,
-      premium: false,
-      isAdmin: false,
-      creatorMode: false,
-      createdAt: fb.serverTimestamp(),
-    });
+  } catch (e) {
+    // If the check itself fails (permission denied on fresh auth), proceed anyway
+    // — the setDoc will fail if rules block it, and we handle that upstream.
+    if (e.message === "That username is already taken.") throw e;
+    console.warn("Username pre-check failed, proceeding:", e.message);
+  }
+
+  // Use a batch (not transaction) — more resilient to fresh-token timing.
+  const batch = fb.writeBatch(db);
+  batch.set(nameRef, { uid });
+  batch.set(userRef(uid), {
+    username,
+    usernameLower: lower,
+    displayName: displayName || username,
+    displayNameLower: (displayName || username).toLowerCase(),
+    email: email || "",
+    bio: "",
+    photoURL,
+    followersCount: 0,
+    followingCount: 0,
+    postsCount: 0,
+    reelsCount: 0,
+    totalViews: 0,
+    verified: false,
+    premium: false,
+    isAdmin: false,
+    creatorMode: false,
+    createdAt: fb.serverTimestamp(),
   });
+  await batch.commit();
   return getUser(uid);
 }
 

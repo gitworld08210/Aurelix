@@ -94,21 +94,61 @@ export function renderSignup() {
 
     busy(submit, true);
     try {
-      const available = await isUsernameAvailable(uname);
+      // Step 1: Check username availability (may fail if Firestore permissions are wrong)
+      let available = true;
+      try {
+        available = await isUsernameAvailable(uname);
+      } catch (usernameErr) {
+        // Firestore permission/index error — skip check, let the transaction handle it
+        console.warn("Username check failed (Firestore issue?):", usernameErr);
+      }
       if (!available) { err.textContent = "That username is taken."; busy(submit, false, "Create account"); return; }
 
+      // Step 2: Create the Firebase Auth account
       const cred = await fb.createUserWithEmailAndPassword(auth, email.value.trim(), pass.value);
       await fb.updateProfile(cred.user, { displayName: name.value.trim() });
-      await createUserProfile(cred.user.uid, {
-        username: uname,
-        displayName: name.value.trim(),
-        email: email.value.trim(),
-      });
+
+      // Step 3: Create Firestore user profile + reserve username
+      // Small delay to ensure the auth ID token propagates to Firestore
+      await new Promise((r) => setTimeout(r, 500));
+      try {
+        await createUserProfile(cred.user.uid, {
+          username: uname,
+          displayName: name.value.trim(),
+          email: email.value.trim(),
+        });
+      } catch (profileErr) {
+        console.error("Profile creation failed (retrying once):", profileErr);
+        // Retry once after another delay
+        await new Promise((r) => setTimeout(r, 1500));
+        try {
+          await createUserProfile(cred.user.uid, {
+            username: uname,
+            displayName: name.value.trim(),
+            email: email.value.trim(),
+          });
+        } catch (retryErr) {
+          // Auth account was created but profile failed — the "complete profile" flow will handle it
+          console.error("Profile creation retry failed:", retryErr);
+          toast("Account created but profile setup had an issue. You'll be prompted to fix it.", "");
+        }
+      }
       toast("Welcome to Aurelix!", "success");
       // main.js auth listener will load the profile and route home
     } catch (e) {
-      console.error(e);
-      err.textContent = e.code ? authErrorMessage(e.code) : (e.message || "Could not create account.");
+      console.error("Signup error:", e);
+      // Show the actual error message for debugging
+      let msg = e.code ? authErrorMessage(e.code) : "";
+      if (!msg && e.message) {
+        msg = e.message;
+        // Common Firestore permission errors
+        if (e.message.includes("PERMISSION_DENIED") || e.message.includes("permission-denied")) {
+          msg = "Firestore permission denied. Have you deployed the security rules from firestore.rules? Or set Firestore to test mode temporarily.";
+        } else if (e.message.includes("NOT_FOUND") || e.message.includes("not-found")) {
+          msg = "Firestore database not found. Make sure you've created a Firestore database in your Firebase console.";
+        }
+      }
+      err.textContent = msg || "Could not create account. Check browser console for details.";
       busy(submit, false, "Create account");
     }
   };
