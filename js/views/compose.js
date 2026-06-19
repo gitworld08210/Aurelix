@@ -2,7 +2,8 @@
 import { el, clear, toast, openModal } from "../utils.js";
 import { icon } from "../icons.js";
 import { avatar } from "../components.js";
-import { me } from "../state.js";
+import { me, uid } from "../state.js";
+import { auth } from "../firebase.js";
 import { uploadToCloudinary } from "../cloudinary.js";
 import { isCloudinaryConfigured } from "../config.js";
 import { createPost } from "../services/posts.js";
@@ -71,7 +72,21 @@ export function openComposer(initial = "post") {
   const doSubmit = async () => {
     if (busy) return;
     status.textContent = "";
-    const user = me();
+    // Get the user profile, or build a minimal fallback from auth state.
+    let user = me();
+    if (!user) {
+      const authUser = auth?.currentUser;
+      if (!authUser) { status.textContent = "You must be logged in to post."; return; }
+      // Profile hasn't loaded from Firestore yet — use auth info as fallback
+      user = {
+        id: authUser.uid,
+        username: authUser.displayName?.toLowerCase().replace(/[^a-z0-9_]/g, "") || "user",
+        displayName: authUser.displayName || "User",
+        photoURL: authUser.photoURL || "",
+        verified: false,
+        premium: false,
+      };
+    }
     if (mode === "post") {
       if (!textArea.value.trim() && !file) { status.textContent = "Write something or add a photo."; return; }
     } else {
