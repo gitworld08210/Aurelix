@@ -17,6 +17,11 @@ function authErrorMessage(code = "") {
     "auth/too-many-requests": "Too many attempts. Try again later.",
     "auth/network-request-failed": "Network error. Check your connection.",
     "auth/operation-not-allowed": "Email/password sign-in is disabled in Firebase. Enable it in Authentication → Sign-in method.",
+    "auth/configuration-not-found": "Firebase project not found. Check your API key and project ID in Settings → App setup.",
+    "auth/invalid-api-key": "Invalid Firebase API key. Go to Settings → App setup and re-enter your config.",
+    "auth/api-key-not-valid": "Firebase API key is not valid. Re-check it in Settings → App setup.",
+    "auth/project-not-found": "Firebase project not found. Check your project ID.",
+    "auth/admin-restricted-operation": "This operation is restricted. Make sure Email/Password sign-in is enabled in Firebase Console → Authentication → Sign-in method.",
   };
   return map[code] || "Something went wrong. Please try again.";
 }

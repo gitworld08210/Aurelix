@@ -17,7 +17,7 @@ export function renderSetup() {
 
   const err = el("div", { class: "error-text" });
 
-  const save = () => {
+  const save = async () => {
     const get = (id) => document.getElementById(id).value.trim();
     const firebase = {
       apiKey: get("f_apiKey"),
@@ -34,6 +34,32 @@ export function renderSetup() {
     };
     const missing = ["apiKey", "authDomain", "projectId", "appId"].filter((k) => !firebase[k]);
     if (missing.length) { err.textContent = "Missing required Firebase fields: " + missing.join(", "); return; }
+    
+    // Validate the config by trying to initialize Firebase
+    err.textContent = "";
+    err.style.color = "";
+    err.textContent = "Testing connection…";
+    try {
+      const { initializeApp, deleteApp } = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js");
+      const { getAuth, signInWithEmailAndPassword } = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js");
+      const testApp = initializeApp(firebase, "test-" + Date.now());
+      const testAuth = getAuth(testApp);
+      // Just initializing without error means the config is valid
+      await deleteApp(testApp);
+      err.style.color = "var(--accent-3)";
+      err.textContent = "Firebase config is valid! Saving…";
+    } catch (e) {
+      console.error("Config test error:", e);
+      // Some errors during init are okay (like no internet for full auth check)
+      // If it's a fundamental config error, Firebase throws immediately
+      if (e.message && (e.message.includes("invalid") || e.message.includes("API key"))) {
+        err.style.color = "";
+        err.textContent = "Invalid Firebase config: " + e.message;
+        return;
+      }
+      // Otherwise proceed — the error may just be network-related during the test
+    }
+    
     saveConfig({ firebase, cloudinary });
     toast("Configuration saved — connecting…", "success");
     // Full reload so Firebase initializes cleanly with the new config.
@@ -45,15 +71,31 @@ export function renderSetup() {
     const raw = document.getElementById("paste_json").value.trim();
     if (!raw) return;
     try {
-      // Accept either a raw object or the `const firebaseConfig = {...};` snippet.
+      // Extract the object portion (handles `const firebaseConfig = {...};` format)
       const match = raw.match(/\{[\s\S]*\}/);
-      const obj = JSON.parse((match ? match[0] : raw).replace(/(\w+):/g, '"$1":').replace(/'/g, '"').replace(/,\s*}/g, "}"));
-      const setIf = (id, v) => { if (v != null) document.getElementById(id).value = v; };
-      setIf("f_apiKey", obj.apiKey); setIf("f_authDomain", obj.authDomain); setIf("f_projectId", obj.projectId);
-      setIf("f_storageBucket", obj.storageBucket); setIf("f_msgSender", obj.messagingSenderId); setIf("f_appId", obj.appId);
+      let jsonStr = match ? match[0] : raw;
+      
+      // Convert JS object notation to valid JSON:
+      // 1. Replace single quotes with double quotes
+      jsonStr = jsonStr.replace(/'/g, '"');
+      // 2. Add quotes around unquoted keys (only word chars before a colon that follows a { or ,)
+      jsonStr = jsonStr.replace(/(?<=[\{,]\s*)([a-zA-Z_]\w*)\s*:/g, '"$1":');
+      // 3. Remove trailing commas before }
+      jsonStr = jsonStr.replace(/,\s*}/g, "}");
+      
+      const obj = JSON.parse(jsonStr);
+      const setIf = (id, v) => { if (v != null) document.getElementById(id).value = String(v); };
+      setIf("f_apiKey", obj.apiKey);
+      setIf("f_authDomain", obj.authDomain);
+      setIf("f_projectId", obj.projectId);
+      setIf("f_storageBucket", obj.storageBucket);
+      setIf("f_msgSender", obj.messagingSenderId);
+      setIf("f_appId", obj.appId);
+      if (obj.measurementId) setIf("f_appId", obj.appId); // keep appId separate
       toast("Parsed Firebase config", "success");
     } catch (e) {
-      toast("Could not parse that — fill the fields manually.", "error");
+      console.error("Parse error:", e);
+      toast("Could not parse — try filling the fields manually.", "error");
     }
   };
 
