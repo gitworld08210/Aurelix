@@ -27,29 +27,12 @@ export function initFirebase() {
 
     app = appMod.initializeApp(cfg.firebase);
 
-    // ── App Check: DISABLED for development ──────────────────────────────────
-    // If App Check is enabled in the Firebase Console, it rejects requests from
-    // web apps that don't present a valid token (error: auth/firebase-app-check-
-    // token-is-invalid). We activate the DEBUG provider so the SDK sends a debug
-    // token that Firebase accepts without reCAPTCHA verification.
-    //
-    // TO FULLY DISABLE: Go to Firebase Console → App Check → Apps tab →
-    // click the overflow menu (⋮) on your web app → select "Unenforce" or
-    // "Unregister". That stops the server from requiring tokens entirely.
-    try {
-      const appCheckMod = await import(`${base}/firebase-app-check.js`);
-      // Setting this global tells the SDK to use a debug token instead of reCAPTCHA.
-      if (typeof self !== "undefined") self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
-      appCheckMod.initializeAppCheck(app, {
-        provider: new appCheckMod.ReCaptchaEnterpriseProvider("FAKE_DEBUG_KEY"),
-        isTokenAutoRefreshEnabled: true,
-      });
-      console.log("App Check: debug mode enabled (bypasses enforcement)");
-    } catch (e) {
-      // If the App Check module fails to load or init, that's fine —
-      // it means App Check isn't enforced and we don't need it.
-      console.warn("App Check init skipped:", e.message);
-    }
+    // NOTE: App Check is intentionally NOT initialized.
+    // Initializing it client-side (especially with a reCAPTCHA provider) attaches
+    // App Check tokens to every Auth/Firestore request. If the key/token isn't
+    // perfectly valid, requests fail with auth/network-request-failed or
+    // app-check-token-is-invalid. Since this project does not enforce App Check,
+    // we leave it off completely so Auth and Firestore use plain authenticated calls.
 
     auth = authMod.getAuth(app);
 

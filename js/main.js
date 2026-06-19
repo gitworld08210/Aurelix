@@ -4,7 +4,7 @@ import { route, setNotFound, navigate, startRouter, parseHash } from "./router.j
 import { state, setAuthUser, setProfile, setReady, setUnreadNotifs, setUnreadChats, on } from "./state.js";
 import { el, mount, toast } from "./utils.js";
 
-const APP_VERSION = "2.4.0";
+const APP_VERSION = "2.5.0";
 console.log("%cAurelix v" + APP_VERSION + " loaded", "color:#4d8dff;font-weight:bold");
 
 const PUBLIC_ROUTES = ["/login", "/signup", "/forgot", "/setup"];
