@@ -11,3 +11,4 @@ Thumbs.db
 # Node (not used for build, but just in case)
 node_modules/
 npm-debug.log*
+.ideavo/project
